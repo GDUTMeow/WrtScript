@@ -5,25 +5,25 @@
 # 支持同时更新 IPv4 (A 记录) 和 IPv6 (AAAA 记录)
 # 如果不需要更新某种类型的记录，请将对应的域名设为空，ID 可以留空以启用自动检测
 
-source utils.fish
+source utils_lib.fish
 
 # Cloudflare Zone ID
 # DNS 配置主界面(https://dash.cloudflare.com/<ACCOUNT_ID>/<DOMAIN>) > API
-set ZONE_ID 
+# set ZONE_ID
 
 # Cloudflare API Token
-set TOKEN 
+# set TOKEN
 
 # IPv4 配置 (如果不需要 IPv4 更新，请将这些变量设为空)
 # RECORD_ID 可以通过 API 获取
-set IPV4_DOMAIN 
+# set IPV4_DOMAIN 
 # 留空以启用自动检测
-set IPV4_RECORD_ID 
+# set IPV4_RECORD_ID 
 
 # IPv6 配置 (如果不需要 IPv6 更新，请将这些变量设为空)
-set IPV6_DOMAIN 
+# set IPV6_DOMAIN
 # 留空以启用自动检测
-set IPV6_RECORD_ID 
+# set IPV6_RECORD_ID 
 
 # DNS 记录配置
 set DNS_TTL 120
@@ -168,10 +168,12 @@ function auto_detect_record_id
     set -l id (echo $resp | awk -F'"id":' '{print $2}' | cut -d '"' -f2 | head -n 1)
     if test -n "$id"
         log_success "$record_type Record ID 获取成功: $id"
+        # 确保变量定义未被注释
+        sed -i "s@^#\s*set $record_id_var_name@set $record_id_var_name@" (status --current-filename)
         # 更新运行时变量
-        set -g $record_id_var_name $id
+        set $record_id_var_name $id
         # 自我更新脚本文件中对应行
-        sed -i "s@set -g $record_id_var_name.*@set -g $record_id_var_name \"$id\"@" (status --current-filename)
+        sed -i "s@set $record_id_var_name.*@set $record_id_var_name \"$id\"@" (status --current-filename)
         # 返回 id 以便调用处捕获
         echo $id
         return 0

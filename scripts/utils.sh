@@ -72,7 +72,7 @@ restore_full_image() {
   
   # 确认操作
   read -p "确定要恢复系统镜像吗？此操作不可逆！[y/N]: " confirm
-  [[ "$confirm" != "y" && "$confirm" != "Y" ]] && return
+  [ "$confirm" != "y" ] && [ "$confirm" != "Y" ] && return
   
   # 解压并恢复
   echo -e "${BLUE}[$(get_timestamp)] 正在解压镜像文件...${RESET}"
@@ -112,7 +112,7 @@ restore_config() {
   
   # 确认操作
   read -p "确定要恢复系统配置吗？[y/N]: " confirm
-  [[ "$confirm" != "y" && "$confirm" != "Y" ]] && return
+  [ "$confirm" != "y" ] && [ "$confirm" != "Y" ] && return
   
   # 创建临时备份
   local current_backup="$OPENWRT_CONFIG_BACKUP_DIR/current_config_$(date +%H%M%S).bak"
@@ -151,7 +151,7 @@ restore_iptables() {
   
   # 确认操作
   read -p "确定要恢复iptables规则吗？[y/N]: " confirm
-  [[ "$confirm" != "y" && "$confirm" != "Y" ]] && return
+  [ "$confirm" != "y" ] && [ "$confirm" != "Y" ] && return
   
   if iptables-restore < $full_path; then
     echo -e "${GREEN}[$(get_timestamp)] iptables规则恢复成功！${RESET}"
@@ -184,7 +184,7 @@ restore_firewall() {
   
   # 确认操作
   read -p "确定要恢复防火墙配置吗？[y/N]: " confirm
-  [[ "$confirm" != "y" && "$confirm" != "Y" ]] && return
+  [ "$confirm" != "y" ] && [ "$confirm" != "Y" ] && return
   
   # 备份当前配置
   local current_backup="$FIREWALL_BACKUP_DIR/current_firewall_$(date +%H%M%S).bak"

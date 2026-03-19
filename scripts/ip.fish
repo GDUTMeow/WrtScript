@@ -1,65 +1,54 @@
 #!/usr/bin/env fish
 
 # Cloudflare Dynamic DNS Updater (IPv4 & IPv6)
-# 自动更新 Cloudflare DNS 记录为当前 PPPoE 拨号的内网 IP 地址
+# 自动更新 Cloudflare DNS 记录为当前 default route 的 IP 地址
 # 支持同时更新 IPv4 (A 记录) 和 IPv6 (AAAA 记录)
 # 如果不需要更新某种类型的记录，请将对应的域名设为空，ID 可以留空以启用自动检测
 
+source utils_lib.fish
+
 # Cloudflare Zone ID
 # DNS 配置主界面(https://dash.cloudflare.com/<ACCOUNT_ID>/<DOMAIN>) > API
-set -g ZONE_ID xxx
+# set ZONE_ID
 
 # Cloudflare API Token
-set -g TOKEN xxx
+# set TOKEN
 
 # IPv4 配置 (如果不需要 IPv4 更新，请将这些变量设为空)
 # RECORD_ID 可以通过 API 获取
-set -g IPV4_DOMAIN ""
-set -g IPV4_RECORD_ID ""
+# set IPV4_DOMAIN 
+# 留空以启用自动检测
+# set IPV4_RECORD_ID 
 
 # IPv6 配置 (如果不需要 IPv6 更新，请将这些变量设为空)
-set -g IPV6_DOMAIN ""
-set -g IPV6_RECORD_ID ""
-
-# PPPoE 接口名称（根据实际情况修改）
-set -g PPPOE_INTERFACE pppoe-wan
+# set IPV6_DOMAIN
+# 留空以启用自动检测
+# set IPV6_RECORD_ID 
 
 # DNS 记录配置
-set -g DNS_TTL 120
-set -g DNS_PROXIED false
+set DNS_TTL 120
+set DNS_PROXIED false
 
-# 全局正则表达式映射
-set -g regex_A '^([0-9]{1,3}\.){3}[0-9]{1,3}$'
-set -g regex_AAAA '^([0-9A-Fa-f]{0,4}:){2,7}[0-9A-Fa-f]{0,4}$'
-
-# =============================================================================
-# 辅助函数
-# =============================================================================
-
-function log_info
-    printf "\033[36m%s %s\033[0m\n" "[INFO]" (string join " " $argv) >&2
-end
-
-function log_error
-    printf "\033[31m%s %s\033[0m\n" "[ERROR]" (string join " " $argv) >&2
-end
-
-function log_success
-    printf "\033[32m%s %s\033[0m\n" "[SUCCESS]" (string join " " $argv) >&2
-end
 
 function validate_ip
+    
+    set -l regex_A '^([0-9]{1,3}\.){3}[0-9]{1,3}$'
+    set -l regex_AAAA '^([0-9A-Fa-f]{0,4}:){2,7}[0-9A-Fa-f]{0,4}$'
+
     set -l type $argv[1]
     set -l ip $argv[2]
     set -l regex (eval echo \${regex_$type})
     string match -q -r $regex $ip
 end
 
-function get_pppoe_ip
+function get_ip
     set -l type $argv[1]
-    set -l flag (string match -q A $type; and echo -4; or echo -6)
-    set -l filter (string match -q A $type; and echo inet; or echo inet6.*global)
-    set -l ip (ip $flag addr show $PPPOE_INTERFACE 2>/dev/null | awk "/$filter/ {print \$2}" | cut -d'/' -f1 | head -n 1)
+    switch $type
+        case A
+            set ip (ip -4 route | grep "default" | awk '{print $NF}')
+        case AAAA
+            set ip (ip -6 addr show scope global | grep inet6 | head -1 | awk '{print $2}' | cut -d'/' -f1)
+    end
     test -n "$ip"; or begin log_error "获取 $type 地址失败: $ip"; return 1; end
     validate_ip $type $ip; or begin log_error "$type 地址格式无效: $ip"; return 1; end
     echo $ip
@@ -72,10 +61,9 @@ function get_dns_record
 
     log_info "获取 $type 记录..."
     curl -s -X GET $url -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" | read -l response; or begin log_error "请求失败"; return 1; end
-    string match -q '"success":true' $response; or begin log_error "Cloudflare API 错误: $response"; return 1; end
+    string match -q '*"success":true*' $response; or begin log_error "Cloudflare API 错误: $response"; return 1; end
 
-    set -l regex (eval echo \${regex_$type})
-    set -l ip (string match -r -o $regex $response)
+    set -l ip (echo $response | sed -n 's/.*"content":"\([^" ]*\)".*/\1/p')
 
     test -n "$ip"; or begin log_error "未提取到 IP"; return 1; end
     validate_ip $type $ip; or begin log_error "IP 格式无效: $ip"; return 1; end
@@ -160,38 +148,6 @@ function auto_detect_record_id
 
     if test -z "$domain"
         # 未配置域名， nothing to do
-        return
-        # 尝试解析错误信息
-        set -l error_msg (echo $response | sed -n 's/.*"message":"\([^"]*\)".*/\1/p')
-        if test -n "$error_msg"
-            log_error "错误信息: $error_msg"
-        end
-
-        # 检查常见错误原因
-        if string match -q "*authentication*" $response
-            log_error "认证失败，请检查 TOKEN 是否正确"
-        else if string match -q "*not found*" $response
-            log_error "DNS 记录未找到，请检查 Record ID 是否正确"
-        else if string match -q "*invalid*" $response
-            log_error "请求参数无效，请检查配置"
-        end
-
-        log_error "完整响应内容: $response"
-        return 1
-    end
-end  # update_cloudflare_dns_record 函数结束
-
-# =============================================================================
-# 自动检测并更新 Record ID
-# =============================================================================
-function auto_detect_record_id
-    # 参数: record_type, domain, record_id_var_name
-    set -l record_type $argv[1]
-    set -l domain $argv[2]
-    set -l record_id_var_name $argv[3]
-
-    if test -z "$domain"
-        # 未配置域名， nothing to do
         return 1
     end
 
@@ -212,10 +168,12 @@ function auto_detect_record_id
     set -l id (echo $resp | awk -F'"id":' '{print $2}' | cut -d '"' -f2 | head -n 1)
     if test -n "$id"
         log_success "$record_type Record ID 获取成功: $id"
+        # 确保变量定义未被注释
+        sed -i "s@^#\s*set $record_id_var_name@set $record_id_var_name@" (status --current-filename)
         # 更新运行时变量
-        set -g $record_id_var_name $id
+        set $record_id_var_name $id
         # 自我更新脚本文件中对应行
-        sed -i "s@set -g $record_id_var_name.*@set -g $record_id_var_name \"$id\"@" (status --current-filename)
+        sed -i "s@set $record_id_var_name.*@set $record_id_var_name \"$id\"@" (status --current-filename)
         # 返回 id 以便调用处捕获
         echo $id
         return 0
@@ -231,27 +189,17 @@ end
 
 log_info "开始检查 Cloudflare DNS 记录更新..."
 
-# 自动检测并更新 Record ID
-# auto_detect_record_id A IPV4_DOMAIN IPV4_RECORD_ID
-# auto_detect_record_id AAAA IPV6_DOMAIN IPV6_RECORD_ID
-
-# 在主循环中按需自动检测 Record ID（也可单独调用）
-# auto_detect_record_id A "$IPV4_DOMAIN" IPV4_RECORD_ID
-# auto_detect_record_id AAAA "$IPV6_DOMAIN" IPV6_RECORD_ID
-
 set -l record_var_names IPV4_RECORD_ID IPV6_RECORD_ID
 
 # 支持的记录类型数组
 set -l types A AAAA
 set -l domains $IPV4_DOMAIN $IPV6_DOMAIN
 set -l record_ids $IPV4_RECORD_ID $IPV6_RECORD_ID
-set -l pppoe_funcs get_pppoe_ipv4 get_pppoe_ipv6
 
 for i in (seq (count $types))
     set -l type $types[$i]
     set -l domain $domains[$i]
     set -l record_id $record_ids[$i]
-    set -l pppoe_func $pppoe_funcs[$i]
     set -l record_var_name $record_var_names[$i]
 
     if test -z "$domain"
@@ -271,7 +219,7 @@ for i in (seq (count $types))
 
     log_info "=== 处理 $type 记录 ($domain) ==="
     # 获取本地 IP
-    set -l local_ip ($pppoe_func)
+    set -l local_ip (get_ip $type)
     if test $status -ne 0
         log_error "获取本地 $type 地址失败，跳过"
         continue

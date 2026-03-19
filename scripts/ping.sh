@@ -2,26 +2,24 @@
 
 # 获取 PPPoE 网关地址
 get_gateway() {
-    GATEWAY=$(ip route | grep "default via" | grep "pppoe" | awk '{print $3}')
-    if [ -z "$GATEWAY" ]; then
-        echo "Failed to get gateway address. Waiting for network to stabilize and retrying..."
-        # 如果获取网关失败，等待一段时间后重试
-        sleep 5
+    while true
+    do
         GATEWAY=$(ip route | grep "default via" | grep "pppoe" | awk '{print $3}')
-        if [ -z "$GATEWAY" ]; then
-            echo "Still unable to get gateway address. Exiting..."
-            exit 1
+        if [ -n "$GATEWAY" ]; then
+            echo "Gateway detected: $GATEWAY"
+            return 0
         fi
-    fi
-    echo "Gateway detected: $GATEWAY"
+        echo "Failed to get gateway address. Waiting for network to stabilize and retrying..."
+        sleep 5
+    done
 }
 
 # 初始化网关地址
-# get_gateway
+get_gateway
 
 # 设置失败次数计数器
 FAIL_COUNT=0
-# 设置连续失败的检测次数（3次）
+# 设置连续失败的检测次数
 MAX_FAIL=3
 # 设置重拨后休眠时间（秒）
 SLEEP_TIME=120
@@ -52,7 +50,7 @@ while true; do
         sleep "$SLEEP_TIME"
         # 重置失败计数器
         FAIL_COUNT=0
-        # 重新获取网关地址（每次重拨后必须更新网关地址）
+        # 重新获取网关地址
         echo "Attempting to get new gateway address after reconnection..."
         get_gateway
     fi
